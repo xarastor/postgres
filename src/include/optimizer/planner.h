@@ -123,6 +123,7 @@ void optimazeGraph (graph_node * graph, char ** out_str, int * offset);
 
 char* extract_Var(Var* var);
 char* extract_OpVar(OpExpr* var);
+char* extract_FuncVar(FuncExpr* var);
 int extract_int_Const(Const* var);
 predicate* extractOp(OpExpr* oExpr);
 void extract(List* list, int extract_index);

@@ -553,6 +553,17 @@ char* extract_OpVar(OpExpr* var) {
     return res;
 }
 
+char* extract_FuncVar(FuncExpr* var) {
+    char * res = malloc(16);
+    char numeric[14];
+    res[0] = 'F';
+    res[1] = '_';
+    res[2] = '\0';
+    strcpy(numeric, itoa(var->location, (char *)(&numeric), 10));
+    strcat(res, numeric);
+    return res;
+}
+
 int extract_int_Const(Const* var) {
     return DatumGetInt32(var->constvalue);
 }
@@ -607,20 +618,30 @@ predicate* extractOp(OpExpr* oExpr) {
                 return NULL;                                    // unknown (unsupported type)
             }
         } else {
-            if (IsA(firstNode, OpExpr)) {                       //Expression into expression can't be an extractable
-                if (((OpExpr *) firstNode)->opresulttype == 23) {
-                    first = extract_OpVar((OpExpr *) firstNode);
+            if (IsA(firstNode, FuncExpr)) {                       //Expression into expression can't be an extractable
+                if (((FuncExpr *) firstNode)->funcresulttype == 23) {
+                    first = extract_FuncVar((FuncExpr *) firstNode);
                 } else {
                     return NULL;                                // unknown (unsupported type)
                 }
             } else {
-                if (IsA(firstNode, Const)) {
-                    constantNode = (Const *) firstNode;
-                    if (constantNode->consttype == 23) {
-                        hasConst = true;
-                        constant = extract_int_Const(constantNode);
+                if (IsA(firstNode, OpExpr)) {                       //Expression into expression can't be an extractable
+                    if (((OpExpr *) firstNode)->opresulttype == 23) {
+                        first = extract_OpVar((OpExpr *) firstNode);
                     } else {
-                        return NULL;                               // unknown (unsupported type)
+                        return NULL;                                // unknown (unsupported type)
+                    }
+                } else {
+                    if (IsA(firstNode, Const)) {
+                        constantNode = (Const *) firstNode;
+                        if (constantNode->consttype == 23) {
+                            hasConst = true;
+                            constant = extract_int_Const(constantNode);
+                        } else {
+                            return NULL;                           // unknown consttype (unsupported type)
+                        }
+                    } else {
+                        return NULL;                               // unknown node type (unsupported type)
                     }
                 }
             }
@@ -636,31 +657,45 @@ predicate* extractOp(OpExpr* oExpr) {
                 second = extract_Var((Var *) secondNode);
             }
         } else {
-            if (IsA(secondNode, OpExpr)) {
-                if (((OpExpr *) secondNode)->opresulttype != 23) {
+            if (IsA(secondNode, FuncExpr)) {                       //Expression into expression can't be an extractable
+                if (((FuncExpr *) secondNode)->funcresulttype != 23) {
                     return NULL;                                // unknown (unsupported type)
                 }
                 if (hasConst) {
-                    first = extract_OpVar((OpExpr *) secondNode);
+                    first = extract_FuncVar((FuncExpr *) secondNode);
                 } else {
-                    second = extract_OpVar((OpExpr *) secondNode);
+                    second = extract_FuncVar((FuncExpr *) secondNode);
                 }
             } else {
-                if (IsA(secondNode, Const)) {
-                    if (hasConst) {
-                        return NULL;                         // comparing constant with constant
+                if (IsA(secondNode, OpExpr)) {
+                    if (((OpExpr *) secondNode)->opresulttype != 23) {
+                        return NULL;                                // unknown (unsupported type)
                     }
-                    constantNode = (Const *) secondNode;
-                    if (constantNode->consttype == 23) {
-                        hasConst = true;
-                        cond_type = reverse_op(cond_type);  // if constant is second we need to reverse cond_type
-                        constant = extract_int_Const(constantNode);
+                    if (hasConst) {
+                        first = extract_OpVar((OpExpr *) secondNode);
                     } else {
-                        return NULL;                         // unknown (unsupported type)
+                        second = extract_OpVar((OpExpr *) secondNode);
+                    }
+                } else {
+                    if (IsA(secondNode, Const)) {
+                        if (hasConst) {
+                            return NULL;                         // comparing constant with constant
+                        }
+                        constantNode = (Const *) secondNode;
+                        if (constantNode->consttype == 23) {
+                            hasConst = true;
+                            cond_type = reverse_op(cond_type);  // if constant is second we need to reverse cond_type
+                            constant = extract_int_Const(constantNode);
+                        } else {
+                            return NULL;                         // unknown (unsupported type)
+                        }
+                    } else {
+                        return NULL;
                     }
                 }
             }
         }
+
 
         if (hasConst) {
             return make_predicate_with_int(constant, cond_type, first);
@@ -1654,9 +1689,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	 * Debug transitivity
 	 */
 
-
-    //elog_node_display(DEBUG5, "parse->jointree->quals ", parse->jointree->quals, true);
-    //describe((Node *)parse->jointree->quals);
+    
     if(parse->jointree->quals != NULL)
         if (IsA(parse->jointree->quals, List)) {
             extract_root((List *) parse->jointree->quals);
