@@ -58,6 +58,717 @@
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
+/*
+ * Transitivity functions
+ */
+
+int a2i(const char *s) {
+    int sign = 1;
+    int num = 0;
+    if(*s == '-') {
+        sign = -1;
+        s++;
+    }
+    if (*s == '+') {
+        s++;
+    }
+
+    while(*s)
+    {
+        num = ((*s)-'0') + num * 10;
+        s++;
+    }
+    return num * sign;
+}
+
+int numbers_only(const char *s)
+{
+    while (*s) {
+        if (isdigit(*s++) == 0) return 0;
+    }
+
+    return 1;
+}
+
+M* mapNew()
+{
+    M* map;
+
+    map = malloc(sizeof(M));
+    map->size = 0;
+    map->items = NULL;
+
+    return map;
+}
+
+int isContant (M* map, int offset) {
+    if (numbers_only(map->items[offset].key)) {
+        return 1;
+    }
+    return 0;
+}
+
+int getConstants (M* map, int offset) {
+    if (numbers_only(map->items[offset].key)) {
+        int tmp = a2i(map->items[offset].key);
+        return tmp;
+    }
+    return 0;
+}
+
+int getMapSize (M* map) {
+    return map->size;
+}
+
+void mapAdd(char* key, void* val, M* map)
+{
+    char* newkey;
+
+    newkey = malloc(strlen(key) + 1);
+    strcpy(newkey, key);
+
+    if (map->size == 0)
+    {
+        map->items = malloc(sizeof(MI));
+    }
+    else
+    {
+        map->items = realloc(map->items, sizeof(MI) * (map->size + 1));
+    }
+
+    (map->items + map->size)->key = newkey;
+    (map->items + map->size)->val = val;
+    (map->items + map->size++)->type = MAP_BY_VAL;
+}
+
+void mapDynAdd(char* key, void* val, M* map)
+{
+    mapAdd(key, val, map);
+    (map->items + map->size - 1)->type = MAP_BY_REF;
+}
+
+void* mapGet(char* key, M* map)
+{
+    int i;
+
+    for (i = 0; i < map->size; i++)
+    {
+        if (strcmp((map->items + i)->key, key) == 0)
+        {
+            return (map->items + i)->val;
+        }
+    }
+
+    return NULL;
+}
+
+void mapClose(M* map)
+{
+    int i = 0;
+
+    for(; i < map->size; i++)
+    {
+        free((map->items + i)->key);
+
+        if ((map->items + i)->type == MAP_BY_REF)
+        {
+            free((map->items + i)->val);
+        }
+    }
+
+    free(map->items);
+    free(map);
+}
+
+void initArray(Array *a, size_t initialSize) {
+    a->array = (char **)malloc(initialSize * 16);
+    a->used = 0;
+    a->size = initialSize;
+}
+
+void insertArray(Array *a, char * element) {
+    // a->used is the number of used entries, because a->array[a->used++] updates a->used only *after* the array has been accessed.
+    // Therefore a->used can go up to a->size
+    if (a->used == a->size) {
+        a->size *= 2;
+        a->array = (char **)realloc(a->array, a->size * 16);
+    }
+    a->array[a->used++] = element;
+}
+
+void freeArray(Array *a) {
+    free(a->array);
+    a->array = NULL;
+    a->used = a->size = 0;
+}
+
+// Потому что в gcc нет этой полезной функции
+char* itoa(int value, char * result, int base) {
+    char* ptr;
+    char *ptr1;
+    char tmp_char;
+    int tmp_value;
+    // check that the base if valid
+    if (base < 2 || base > 36) { *result = '\0'; return result; }
+
+    ptr = result;
+    ptr1 = result;
+
+    do {
+        tmp_value = value;
+        value /= base;
+        *ptr++ = "zyxwvutsrqponmlkjihgfedcba9876543210123456789abcdefghijklmnopqrstuvwxyz" [35 + (tmp_value - value * base)];
+    } while ( value );
+
+    // Apply negative sign
+    if (tmp_value < 0) *ptr++ = '-';
+    *ptr-- = '\0';
+    while(ptr1 < ptr) {
+        tmp_char = *ptr;
+        *ptr--= *ptr1;
+        *ptr1++ = tmp_char;
+    }
+    return result;
+}
+
+struct val * make_val_from_constant (int constant) {
+    char constant_str[16];
+    val * v = malloc(sizeof(val));
+    v->type = NUMERIC;
+    v->constant = constant;
+    stpcpy(v->variable_name, itoa(constant, (char *)(&constant_str), 10));
+
+    return v;
+}
+
+val * make_val_from_str_constant (char * constant) {
+    val * v = malloc(sizeof(val));
+    v->type = NUMERIC;
+    v->constant = a2i(constant);
+    stpcpy(v->variable_name, constant);
+    return v;
+}
+
+val * make_val_from_str (char * variable_name) {
+    val * v = malloc(sizeof(val));
+    v->type = VARIABLE;
+    stpcpy(v->variable_name, variable_name);
+
+    return v;
+}
+
+predicate * make_predicate_with_str_int(char * constant, condition_type cond, char * variable_name) {
+    val * lval = make_val_from_str_constant(constant);
+    val * rval = make_val_from_str(variable_name);
+    predicate * p = malloc(sizeof(predicate));
+    p->lval = lval;
+    p->rval = rval;
+    p->cond = cond;
+    return p;
+}
+
+predicate * make_predicate_with_int (int constant, condition_type cond, char * variable_name) {
+    val * lval = make_val_from_constant(constant);
+    val * rval = make_val_from_str(variable_name);
+    predicate * p = malloc(sizeof(predicate));
+    p->lval = lval;
+    p->rval = rval;
+    p->cond = cond;
+    return p;
+}
+
+predicate * make_predicate (char * variable_name1, condition_type cond, char * variable_name2) {
+    val * lval = make_val_from_str(variable_name1);
+    val * rval = make_val_from_str(variable_name2);
+    predicate * p = malloc(sizeof(predicate));
+    p->lval = lval;
+    p->rval = rval;
+    p->cond = cond;
+    return p;
+}
+
+char * cond_type_to_str (condition_type cond) {
+    if (cond == MORE) {
+        return ">";
+    } else if (cond == MORE_OR_EQUAL) {
+        return ">=";
+    } else if (cond == LESS) {
+        return "<";
+    } else if (cond == LESS_OR_EQUAL) {
+        return "<=";
+    }
+    return NULL;
+}
+
+void print_graph_node (graph_node * graph, char * key) {
+    struct map * m = mapGet(key, graph->m);
+    Array *a;
+    printf("%s\n", key);
+    printf("    %2s [", cond_type_to_str(MORE));
+
+    a = mapGet(cond_type_to_str(MORE), m);
+    for (int i = 0; i < a->used; ++i) {
+        printf("%s, ", a->array[i]);
+    }
+    printf("]\n");
+
+    printf("    %2s [", cond_type_to_str(MORE_OR_EQUAL));
+    a = mapGet(cond_type_to_str(MORE_OR_EQUAL), m);
+    for (int i = 0; i < a->used; ++i) {
+        printf("%s, ", a->array[i]);
+    }
+    printf("]\n");
+
+    printf("    %2s [", cond_type_to_str(LESS));
+    a = mapGet(cond_type_to_str(LESS), m);
+    for (int i = 0; i < a->used; ++i) {
+        printf("%s, ", a->array[i]);
+    }
+    printf("]\n");
+
+    printf("    %2s [", cond_type_to_str(LESS_OR_EQUAL));
+    a = mapGet(cond_type_to_str(LESS_OR_EQUAL), m);
+    for (int i = 0; i < a->used; ++i) {
+        printf("%s, ", a->array[i]);
+    }
+    printf("]\n");
+}
+
+void make_empty_graph_node (graph_node * graph, char * key) {
+    void addCond (struct map * m, condition_type cond) {
+        Array * a = malloc(sizeof(Array));
+        initArray(a, 1);
+        mapAdd(cond_type_to_str(cond), a, m);
+    }
+    struct map *m = mapNew();
+
+    addCond(m, MORE);
+    addCond(m, MORE_OR_EQUAL);
+    addCond(m, LESS);
+    addCond(m, LESS_OR_EQUAL);
+
+    mapAdd(key, m, graph->m);
+}
+
+condition_type reverse_op (condition_type op) {
+    if (op == LESS_OR_EQUAL)
+        return MORE_OR_EQUAL;
+    else if (op == MORE_OR_EQUAL)
+        return LESS_OR_EQUAL;
+    else if (op == LESS)
+        return MORE;
+    else if (op == MORE)
+        return LESS;
+    return NOTHING_COND;
+}
+
+condition_type resolve_ops (condition_type op1, condition_type op2) {
+    if (op1 == LESS && op2 == LESS) {
+        return LESS;
+    }
+    if (op1 == LESS_OR_EQUAL && op2 == LESS_OR_EQUAL) {
+        return LESS_OR_EQUAL;
+    }
+    if ((op1 == LESS && op2 == LESS_OR_EQUAL)
+        || (op1 == LESS_OR_EQUAL && op2 == LESS)) {
+        return LESS;
+    }
+    if (op1 == MORE && op2 == MORE) {
+        return MORE;
+    }
+    if (op1 == MORE_OR_EQUAL && op2 == MORE_OR_EQUAL) {
+        return MORE_OR_EQUAL;
+    }
+    if ((op1 == MORE && op2 == MORE_OR_EQUAL)
+        || (op1 == MORE_OR_EQUAL && op2 == MORE)) {
+        return MORE;
+    }
+    return NOTHING_COND;
+}
+
+condition_type * near_ops (condition_type op) {
+    condition_type * out = malloc(sizeof(condition_type) * 2);
+    if (op == MORE) {
+        out[0] = MORE;
+        out[1] = MORE_OR_EQUAL;
+        return out;
+    }
+    if (op == MORE_OR_EQUAL) {
+        out[0] = MORE;
+        out[1] = MORE_OR_EQUAL;
+        return out;
+    }
+    if (op == LESS) {
+        out[0] = LESS;
+        out[1] = LESS_OR_EQUAL;
+        return out;
+    }
+    if (op == LESS_OR_EQUAL) {
+        out[0] = LESS;
+        out[1] = LESS_OR_EQUAL;
+        return out;
+    }
+    return NULL;
+}
+
+void addDeps (graph_node * graph,  char * name, predicate * sample) {
+    val * x;
+    val * y;
+    condition_type operate;
+    if (mapGet(name, graph->m) == NULL) {
+        make_empty_graph_node (graph, name);
+    }
+    x = sample->lval;
+    y = sample->rval;
+    operate = sample->cond;
+
+    if (strcmp(name, y->variable_name) == 0) {
+        operate = reverse_op(operate);
+    }
+    if (strcmp(name, x->variable_name) == 0) {
+        struct map * m = mapGet(name, graph->m);
+        Array *a = mapGet(cond_type_to_str(operate), m);
+        insertArray(a, y->variable_name);
+    } else {
+        struct map * m = mapGet(name, graph->m);
+        Array *a = mapGet(cond_type_to_str(operate), m);
+        insertArray(a, x->variable_name);
+    }
+}
+
+char * predicate_to_str (predicate * p) {
+    char * out = malloc(38);
+    char * r_var_name = p->rval->variable_name;
+    char * l_var_name = p->lval->variable_name;
+    char * cond_str = cond_type_to_str(p->cond);
+    out[0] = '\0';
+
+    strcat(out, l_var_name);
+    strcat(out, " ");
+    strcat(out, cond_str);
+    strcat(out, " ");
+    strcat(out, r_var_name);
+    return out;
+}
+
+void injectInGraph (graph_node * graph, predicate * sample) {
+    val * l = sample->lval;
+    val * r = sample->rval;
+
+    addDeps(graph, l->variable_name, sample);
+    addDeps(graph, r->variable_name, sample);
+}
+
+void genDepsGraph (graph_node * graph, predicate * samples[], int count) {
+    for (int i = 0; i < count; ++i) {
+        predicate * sample = samples[i];
+        injectInGraph(graph, sample);
+    }
+}
+
+void optimazeGraph (graph_node * graph, char ** out_str, int * offset) {
+    void genCond (graph_node * graph, int constant, condition_type op, int index, char ** out_str, int * offset) {
+        char constant_str[16];
+        struct map* m;
+        Array * deps;
+        char * dep;
+        condition_type * ops;
+        condition_type op1;
+        condition_type op2;
+        struct map* m_dep;
+        itoa(constant, (char*)&constant_str, 10);
+        m = mapGet(constant_str, graph->m);
+        deps = mapGet(cond_type_to_str(op), m);
+
+        dep = deps->array[index];
+        ops = near_ops(op);
+        op1 = ops[0];
+        op2 = ops[1];
+
+        m_dep = mapGet(dep, graph->m);
+        if (resolve_ops(op, op1) != NOTHING_COND) {
+            Array * a_dep = mapGet(cond_type_to_str(op1), m_dep);
+            for (int i = 0; i < a_dep->used; ++i) {
+                char * key = a_dep->array[i];
+                predicate * new_predicate = make_predicate_with_int(constant, resolve_ops(op, op1), key);
+                injectInGraph(graph, new_predicate);
+                out_str[*offset] = predicate_to_str(new_predicate);
+                *offset = *offset + 1;
+            }
+        }
+        if (resolve_ops(op, op2) != NOTHING_COND) {
+            Array * a_dep = mapGet(cond_type_to_str(op2), m_dep);
+            for (int i = 0; i < a_dep->used; ++i) {
+                char * key = a_dep->array[i];
+                predicate * new_predicate = make_predicate_with_int(constant, resolve_ops(op, op2), key);
+                injectInGraph(graph, new_predicate);
+                out_str[*offset] = predicate_to_str(new_predicate);
+                *offset = *offset + 1;
+            }
+        }
+    }
+
+    condition_type conds[] = { MORE, LESS, MORE_OR_EQUAL, LESS_OR_EQUAL };
+
+    for (int i = 0; i < getMapSize(graph->m); ++i) {
+        if (isContant(graph->m, i)) {
+            struct map* m;
+            Array * deps;
+            int constant = getConstants(graph->m, i);
+            char constant_str[16];
+            itoa(constant, (char*)&constant_str, 10);
+            m = mapGet(constant_str, graph->m);
+
+            deps = NULL;
+            for (int cond_ind = 0; cond_ind < 4; ++cond_ind) {
+                deps = mapGet(cond_type_to_str(conds[cond_ind]), m);
+                for (int j = 0; j < deps->used; ++j) {
+                    genCond(graph, constant, conds[cond_ind], j, out_str, offset);
+                }
+            }
+        }
+    }
+}
+
+char* extract_Var(Var* var) {
+    char * res = malloc(16);
+    char numeric[14];
+    res[0] = 'I';
+    res[1] = '_';
+    res[2] = '\0';
+    strcpy(numeric, itoa(var->varno, (char *)(&numeric), 10));
+    strcat(res, numeric);
+    return res;
+
+}
+
+char* extract_OpVar(OpExpr* var) {
+    char * res = malloc(16);
+    char numeric[14];
+    res[0] = 'L';
+    res[1] = '_';
+    res[2] = '\0';
+    strcpy(numeric, itoa(var->location, (char *)(&numeric), 10));
+    strcat(res, numeric);
+    return res;
+}
+
+int extract_int_Const(Const* var) {
+    return DatumGetInt32(var->constvalue);
+}
+
+/*
+ * *extractOp* try to make predicate from OpExpr
+ *
+ * *extract* optimize exactly one AND-group (linked conditions that needed to optimize)
+ *
+ *  *extract_root*
+ * if tree starts with OR - extract from args of all AND nodes
+ * if tree starts with AND nodes extract from args of all tree nodes
+ * else extract from tree
+ */
+
+predicate* extractOp(OpExpr* oExpr) {
+    if (    oExpr->opfuncid == 147 ||   // >
+            oExpr->opfuncid == 150 ||   // >=
+            oExpr->opfuncid == 66  ||   // <
+            oExpr->opfuncid == 149)     // <=
+    {
+        bool hasConst = false;
+        char* first;
+        char* second;
+        int constant;
+        Const *constantNode;
+        condition_type cond_type;
+
+        Node* firstNode = linitial(oExpr->args);
+        Node* secondNode = lsecond(oExpr->args);
+        if (!firstNode || !secondNode) {
+            return NULL;                        // Nodes doesn't exists
+        }
+
+        if (oExpr->opfuncid == 147) {
+            cond_type = MORE;
+        }
+        if (oExpr->opfuncid == 150) {
+            cond_type = MORE_OR_EQUAL;
+        }
+        if (oExpr->opfuncid == 66) {
+            cond_type = LESS;
+        }
+        if (oExpr->opfuncid == 149) {
+            cond_type = LESS_OR_EQUAL;
+        }
+
+        if (IsA(firstNode, Var)) {
+            if (((Var *) firstNode)->vartype == 23) {
+                first = extract_Var((Var *) firstNode);
+            } else {
+                return NULL;                                    // unknown (unsupported type)
+            }
+        } else {
+            if (IsA(firstNode, OpExpr)) {                       //Expression into expression can't be an extractable
+                if (((OpExpr *) firstNode)->opresulttype == 23) {
+                    first = extract_OpVar((OpExpr *) firstNode);
+                } else {
+                    return NULL;                                // unknown (unsupported type)
+                }
+            } else {
+                if (IsA(firstNode, Const)) {
+                    constantNode = (Const *) firstNode;
+                    if (constantNode->consttype == 23) {
+                        hasConst = true;
+                        constant = extract_int_Const(constantNode);
+                    } else {
+                        return NULL;                               // unknown (unsupported type)
+                    }
+                }
+            }
+        }
+
+        if (IsA(secondNode, Var)) {
+            if (((Var *) secondNode)->vartype != 23) {
+                return NULL;                                    // unknown (unsupported type)
+            }
+            if (hasConst) {
+                first = extract_Var((Var *) secondNode);
+            } else {
+                second = extract_Var((Var *) secondNode);
+            }
+        } else {
+            if (IsA(secondNode, OpExpr)) {
+                if (((OpExpr *) secondNode)->opresulttype != 23) {
+                    return NULL;                                // unknown (unsupported type)
+                }
+                if (hasConst) {
+                    first = extract_OpVar((OpExpr *) secondNode);
+                } else {
+                    second = extract_OpVar((OpExpr *) secondNode);
+                }
+            } else {
+                if (IsA(secondNode, Const)) {
+                    if (hasConst) {
+                        return NULL;                         // comparing constant with constant
+                    }
+                    constantNode = (Const *) secondNode;
+                    if (constantNode->consttype == 23) {
+                        hasConst = true;
+                        cond_type = reverse_op(cond_type);  // if constant is second we need to reverse cond_type
+                        constant = extract_int_Const(constantNode);
+                    } else {
+                        return NULL;                         // unknown (unsupported type)
+                    }
+                }
+            }
+        }
+
+        if (hasConst) {
+            return make_predicate_with_int(constant, cond_type, first);
+        } else {
+            return make_predicate(first, cond_type, second);
+        }
+    } else {
+        return NULL; // Not-predicatable (in terms <, >, <=, >= transitivity)
+    }
+}
+
+void extract(List* list, int extract_index) {
+
+    struct map * m = mapNew();
+    int index = 0;
+    ListCell* listCell;
+    char *out[20];
+    int indexG = 0;
+    predicate *pred;
+    predicate **pl = malloc(sizeof(predicate *) * list_length(list));
+    Node *subNode;
+    graph_node graph = {
+            m
+    };
+
+    foreach(listCell, list) {
+        subNode = (Node *) lfirst(listCell);
+        if ( IsA(subNode, OpExpr)) {
+            pred = extractOp((OpExpr *) subNode);
+            if(pred != NULL) {
+                pl[index] = pred;
+                index++;
+                ereport(DEBUG5,
+                        (errmsg_internal("found %s at index %d:", "predicate ", extract_index),
+                                errdetail_internal("%s", predicate_to_str(pred))));
+            }
+
+
+        }
+    }
+    if (index > 0) {
+        genDepsGraph(&graph, pl, index);
+        optimazeGraph(&graph, out, &indexG);
+        ereport(DEBUG5,
+                (errmsg_internal("%s with index %d:", "predicate ", extract_index),
+                        errdetail_internal("statements amount %d", indexG)));
+
+        for (int i = 0; i < indexG; ++i) {
+            ereport(LOG,
+                    (errmsg_internal("%s with index %d:", "predicate ", extract_index),
+                            errdetail_internal("statements to add %s", out[i])));
+        }
+    }
+
+    mapClose(m);
+    free(pl);
+
+}
+
+void extract_root(List* list) {
+    int extract_index = 0;
+    Node *node;
+    ListCell* listCell;
+    Node *subNode;
+    BoolExpr *bSubExpr;
+    BoolExpr *bExpr;
+    if (list_length(list) <= 0) {
+        return;
+    }
+    node = linitial(list);
+    if (!node) {
+        return;
+    }
+
+    if ( IsA(node, BoolExpr)) {
+        bExpr = (BoolExpr *) node;
+        if (bExpr->boolop == OR_EXPR) {
+            foreach(listCell, bExpr->args) {
+                subNode = (Node *) lfirst(listCell);
+                if ( IsA(subNode, BoolExpr)) {
+                    bSubExpr = (BoolExpr *) subNode;
+                    if (bSubExpr->boolop == AND_EXPR) {
+                        extract(bSubExpr->args, extract_index);
+                        extract_index++;
+                    }
+                }
+            }
+        } else {
+            foreach(listCell, list) {
+                subNode = (Node *) lfirst(listCell);
+                if ( IsA(subNode, BoolExpr)) {
+                    BoolExpr *bSubExpr = (BoolExpr *) subNode;
+                    if (bSubExpr->boolop == AND_EXPR) {
+                        extract(bSubExpr->args, extract_index);
+                        extract_index++;
+                    }
+                }
+            }
+        }
+    } else {
+        extract(list, extract_index);
+    }
+}
+
+/*
+ * Transitivity ends
+ */
+
 
 /* GUC parameters */
 double		cursor_tuple_fraction = DEFAULT_CURSOR_TUPLE_FRACTION;
@@ -937,6 +1648,20 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 		}
 	}
 	parse->havingQual = (Node *) newHaving;
+
+
+    /*
+	 * Debug transitivity
+	 */
+
+
+    //elog_node_display(DEBUG5, "parse->jointree->quals ", parse->jointree->quals, true);
+    //describe((Node *)parse->jointree->quals);
+    if(parse->jointree->quals != NULL)
+        if (IsA(parse->jointree->quals, List)) {
+            extract_root((List *) parse->jointree->quals);
+        }
+
 
 	/* Remove any redundant GROUP BY columns */
 	remove_useless_groupby_columns(root);
